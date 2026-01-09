@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  # Data Collection Service
+  data-service:
+    build: ./data-collection-service
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - FLASK_ENV=development
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5001/api/symbols', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Analysis Service
+  analysis-service:
+    build: ./analysis-service
+    ports:
+      - "5002:5002"
+    environment:
+      - DATA_SERVICE_URL=http://data-service:5001
+    depends_on:
+      - data-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5002/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Export Service
+  export-service:
+    build: ./export-service
+    ports:
+      - "5003:5003"
+    environment:
+      - DATA_SERVICE_URL=http://data-service:5001
+      - ANALYSIS_SERVICE_URL=http://analysis-service:5002
+    depends_on:
+      - data-service
+      - analysis-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5003/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Main Application (Gateway)
+  main-app:
+    build: ./main-app
+    ports:
+      - "5000:5000"
+    environment:
+      - DATA_SERVICE_URL=http://data-service:5001
+      - ANALYSIS_SERVICE_URL=http://analysis-service:5002
+      - EXPORT_SERVICE_URL=http://export-service:5003
+    depends_on:
+      - data-service
+      - analysis-service
+      - export-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Load Balancer (Optional)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - main-app
+      - data-service
+      - analysis-service
+      - export-service
+    restart: unless-stopped
